@@ -1,0 +1,13 @@
+{
+  "name": "turf-party",
+  "version": "1.0.0",
+  "description": "Private-room territory game for you and your friends",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/sim-test.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" },
+  "license": "MIT"
+}
