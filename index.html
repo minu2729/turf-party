@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Turf Party</title>
+<style>
+  /* Layout: full-screen arena canvas, floating HUD chips, one centered menu card. Single dark look by design. */
+  :root {
+    color-scheme: dark;
+    --bg: #0f172a; --panel: #1e293b; --panel-2: #273449; --text: #f1f5f9; --muted: #94a3b8;
+    --accent: #38bdf8; --accent-ink: #052e40; --good: #34d399; --bad: #fb7185;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: ui-rounded, "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; user-select: none; -webkit-user-select: none; }
+  canvas { position: absolute; inset: 0; display: block; touch-action: none; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; inset: 0; pointer-events: none; padding: max(12px, env(safe-area-inset-top)) 16px 16px; }
+  .chip { background: rgba(15,23,42,.72); backdrop-filter: blur(6px); border-radius: 12px; padding: 8px 12px; font-weight: 700; }
+  #score { position: absolute; left: 16px; top: max(12px, env(safe-area-inset-top)); font-size: 15px; line-height: 1.3; }
+  #score b { font-size: 22px; display: block; letter-spacing: .3px; }
+  #score small { color: var(--muted); font-weight: 600; }
+  #board { position: absolute; right: 16px; top: max(12px, env(safe-area-inset-top)); width: 150px; font-size: 12.5px; padding: 8px 10px; }
+  #board div { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: nowrap; }
+  #board i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+  #board span { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  #board em { font-style: normal; color: var(--muted); }
+  #board .me { color: #fff; }
+  #feed { position: absolute; left: 16px; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 52px); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; max-width: 55%; }
+  #feed div { padding: 5px 9px; border-radius: 9px; background: rgba(15,23,42,.7); animation: fadein .2s ease; }
+  #feed div.mine { background: rgba(14,116,144,.85); }
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  #topbar { position: absolute; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; justify-content: center; gap: 8px; pointer-events: none; }
+  #topbar button { pointer-events: auto; }
+  #roomChip { letter-spacing: 2px; }
+  #roomChip small { letter-spacing: 0; color: var(--muted); font-weight: 600; margin-right: 6px; }
+  .tiny { border: 0; border-radius: 12px; padding: 8px 14px; font: inherit; font-weight: 700; font-size: 14px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  .tiny.ghost { background: rgba(15,23,42,.72); color: var(--text); }
+
+  /* panels */
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,23,42,.55); backdrop-filter: blur(3px); overflow-y: auto; }
+  .card { width: 100%; max-width: 380px; background: var(--panel); border-radius: 22px; padding: 22px 20px; box-shadow: 0 20px 60px rgba(0,0,0,.45); margin: auto; }
+  h1 { margin: 0 0 2px; font-size: 32px; letter-spacing: .5px; }
+  h1 span { color: var(--accent); }
+  p.sub { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  input[type=text] { width: 100%; padding: 13px 14px; border-radius: 13px; border: 2px solid transparent; background: var(--panel-2); color: var(--text); font: inherit; font-size: 16px; outline: none; }
+  input[type=text]:focus { border-color: var(--accent); }
+  .btn { display: block; width: 100%; margin-top: 10px; padding: 14px; border: 0; border-radius: 14px; font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; background: var(--panel-2); color: var(--text); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn:active { transform: scale(.98); }
+  .box { margin-top: 10px; padding: 12px; border-radius: 14px; background: rgba(0,0,0,.18); }
+  .box label { display: block; font-size: 12px; color: var(--muted); font-weight: 700; margin: 8px 0 6px; text-transform: uppercase; letter-spacing: .6px; }
+  .box label:first-child { margin-top: 0; }
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1; padding: 10px 4px; border: 2px solid transparent; border-radius: 11px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+  .seg button.on { border-color: var(--accent); background: rgba(56,189,248,.14); }
+  .err { color: var(--bad); font-size: 13.5px; min-height: 18px; margin-top: 10px; font-weight: 600; }
+  .note { margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  #codeIn { text-transform: uppercase; letter-spacing: 6px; text-align: center; font-size: 22px; font-weight: 800; }
+  .stats { display: flex; gap: 10px; margin: 14px 0 6px; }
+  .stats div { flex: 1; background: var(--panel-2); border-radius: 14px; padding: 12px; text-align: center; font-size: 12px; color: var(--muted); font-weight: 700; }
+  .stats b { display: block; font-size: 24px; color: var(--text); }
+  .rank { margin: 12px 0 4px; text-align: left; }
+  .rank div { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; font-weight: 700; font-size: 14px; }
+  .rank div:nth-child(odd) { background: rgba(0,0,0,.14); }
+  .rank i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .rank span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rank em { font-style: normal; color: var(--muted); }
+  #won .card { text-align: center; }
+  #wonNext { font-weight: 700; color: var(--accent); }
+  #toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); padding: 9px 16px; border-radius: 12px; background: rgba(15,23,42,.9); font-weight: 700; font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="score" class="chip"><small>Territory</small><b id="pct">0%</b><small id="kills">0 eliminated</small></div>
+  <div id="board" class="chip"></div>
+  <div id="feed"></div>
+  <div id="topbar">
+    <div id="roomChip" class="chip hidden"><small>ROOM</small><span id="roomCode"></span></div>
+    <button id="btnInvite" class="tiny hidden">Invite friends</button>
+    <button id="btnLeave" class="tiny ghost">Menu</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<div id="menu" class="overlay">
+  <div class="card">
+    <h1>Turf <span>Party</span></h1>
+    <p class="sub">Claim land. Cut trails. Play with your friends.</p>
+    <input id="nameIn" type="text" maxlength="14" placeholder="Your name" autocomplete="off" autocapitalize="words">
+
+    <button id="btnJoinLink" class="btn primary hidden">Join room <span id="linkCode"></span></button>
+    <button id="btnPractice" class="btn primary">Practice vs bots</button>
+
+    <div id="friends">
+      <button id="btnCreate" class="btn">Create a private room</button>
+      <div id="createBox" class="box hidden">
+        <label>Map size</label>
+        <div class="seg" id="sizeSeg">
+          <button data-v="s">Small<br><small>up to ~6</small></button>
+          <button data-v="m" class="on">Medium<br><small>up to ~12</small></button>
+          <button data-v="l">Large<br><small>up to 20</small></button>
+        </div>
+        <label>Fill empty space with bots</label>
+        <div class="seg" id="botSeg">
+          <button data-v="0" class="on">None</button>
+          <button data-v="3">3 bots</button>
+          <button data-v="6">6 bots</button>
+        </div>
+        <button id="btnStartRoom" class="btn primary">Create room</button>
+      </div>
+
+      <button id="btnJoin" class="btn">Join with a code</button>
+      <div id="joinBox" class="box hidden">
+        <input id="codeIn" type="text" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+        <button id="btnGoJoin" class="btn primary">Join</button>
+      </div>
+    </div>
+
+    <div class="err" id="menuErr"></div>
+    <div class="note" id="howto">Touch and drag anywhere to steer (like a joystick). On a computer, hold the mouse and drag, or use the arrow keys / WASD. Go around in circles or draw any shape: leave your land, loop back home, and everything you circled is yours. Crossing your own line is safe. Don't let anyone cut your trail!</div>
+    <div class="note hidden" id="offlineNote">Preview build: practice mode only. Private rooms for friends need the server from the project folder.</div>
+  </div>
+</div>
+
+<div id="dead" class="overlay hidden">
+  <div class="card">
+    <h1>Eliminated!</h1>
+    <p class="sub" id="deadWho"></p>
+    <div class="stats">
+      <div><b id="dPct">0%</b>best territory</div>
+      <div><b id="dKills">0</b>eliminated</div>
+    </div>
+    <button id="btnAgain" class="btn primary">Play again</button>
+    <button id="btnToMenu" class="btn">Back to menu</button>
+  </div>
+</div>
+
+<div id="won" class="overlay hidden">
+  <div class="card">
+    <h1 id="wonTitle"></h1>
+    <p class="sub" id="wonSub"></p>
+    <div class="rank" id="wonBoard"></div>
+    <div class="note" id="wonNext"></div>
+    <button id="btnWonMenu" class="btn">Back to menu</button>
+  </div>
+</div>
+
+<script src="game.js"></script>
+<script>
+(function () {
+  'use strict';
+  var G = window.TurfGame;
+  var OFFLINE = !!window.TURF_OFFLINE;
+  var TICK = G.TICK_MS;
+  var HEAD = 4.6, TRAIL = 2.7, EXT = 1.1, GRID = 5;       // sizes in map units
+  var SMOOTH_PASSES = 5, LAG_TICKS = 1.75, MAX_BUILDS = 2;
+  var $ = function (id) { return document.getElementById(id); };
+  var canvas = $('c'), ctx = canvas.getContext('2d');
+  var VW = 0, VH = 0, DPR = 1;
+
+  var mode = 'menu';            // menu | practice | online
+  var world = null, myId = 0, stepMs = TICK, stepAt = 0, acc = 0;
+  var ws = null, roomCode = '', connecting = false;
+  var flashes = [], particles = [], terr = {};
+  var cam = { x: 100, y: 100, s: 6 }, lastFocus = null, focusP = null, lastPick = 0;
+  var myKills = 0, bestCount = 0, deadAt = 0, wonUntil = 0;
+  var hudAt = 0, lastFrame = performance.now();
+  var opts = { size: 'm', bots: '0' };
+  var latestN = 0, renderT = 0;                 // online: newest tick and the (slightly older) tick we draw
+  var edgeA = null, edgeB = null, edgeFor = null;
+
+  /* ---------- small helpers ---------- */
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
+  function toast(t) {
+    var el = $('toast'); el.textContent = t; el.classList.add('on');
+    clearTimeout(toast.t); toast.t = setTimeout(function () { el.classList.remove('on'); }, 1800);
+  }
+  function hex2rgb(h) { var n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function mix(rgb, t, to) {
+    return 'rgb(' + rgb.map(function (c) { return Math.round(c + (to - c) * t); }).join(',') + ')';
+  }
+  var palCache = {};
+  function pal(color) {
+    var c = palCache[color];
+    if (!c) {
+      var r = hex2rgb(color);
+      c = palCache[color] = {
+        head: mix(r, 0.05, 255), terr: mix(r, 0.22, 255), edge: mix(r, 0.2, 0),
+        trail: mix(r, 0.5, 255), dark: mix(r, 0.38, 0), shine: mix(r, 0.6, 255), solid: color
+      };
+    }
+    return c;
+  }
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+  }
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    VW = window.innerWidth; VH = window.innerHeight;
+    canvas.width = Math.round(VW * DPR); canvas.height = Math.round(VH * DPR);
+    canvas.style.width = VW + 'px'; canvas.style.height = VH + 'px';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ---------- game setup ---------- */
+  function resetStats() {
+    myKills = 0; bestCount = 0; deadAt = 0; wonUntil = 0; flashes.length = 0; particles.length = 0;
+    $('dead').classList.add('hidden'); $('won').classList.add('hidden'); $('feed').innerHTML = '';
+  }
+
+  function useWorld(w) { world = w; terr = {}; edgeFor = null; for (var id in w.bb) w.dirty[id] = 1; }
+
+  function startDemo() {
+    var g = new G.Game(160);
+    for (var i = 0; i < 8; i++) g.addPlayer(null, true);
+    useWorld(g); myId = 0; mode = 'menu'; acc = 0; stepMs = TICK; stepAt = performance.now(); focusP = null;
+    flashes.length = 0; particles.length = 0;
+  }
+
+  function startPractice() {
+    closeSocket();
+    var g = new G.Game(220);
+    var me = g.addPlayer(playerName(), false);
+    for (var i = 0; i < 7; i++) g.addPlayer(null, true);
+    useWorld(g); myId = me.id; mode = 'practice'; acc = 0; stepMs = TICK; stepAt = performance.now();
+    focusP = null;
+    resetStats(); enterGame();
+    cam.x = me.x; cam.y = me.y; cam.s = 6;
+  }
+
+  function enterGame() {
+    $('menu').classList.add('hidden'); $('hud').classList.remove('hidden');
+    var online = mode === 'online';
+    $('roomChip').classList.toggle('hidden', !online);
+    $('btnInvite').classList.toggle('hidden', !online);
+    $('roomCode').textContent = roomCode;
+  }
+
+  function showMenu(msg) {
+    closeSocket();
+    mode = 'menu'; roomCode = '';
+    $('hud').classList.add('hidden'); $('dead').classList.add('hidden'); $('won').classList.add('hidden'); wonUntil = 0; $('menu').classList.remove('hidden');
+    $('menuErr').textContent = msg || '';
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    startDemo();
+  }
+
+  function playerName() {
+    var n = $('nameIn').value.replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14) || 'Player';
+    store('turf-name', n);
+    return n;
+  }
+
+  // start (or restart) looking at an online world from a full snapshot
+  function enterWorld(snap) {
+    var w = new G.ClientWorld(snap);
+    w.onFx = processFx;
+    w.players.forEach(function (p) { p.hist = [[w.n, p.x, p.y]]; });
+    useWorld(w);
+    latestN = w.n; renderT = latestN - LAG_TICKS;
+    focusP = null;
+    resetStats();
+    var me = w.players.get(myId);
+    if (me) { cam.x = me.x; cam.y = me.y; cam.s = 6; }
+    if (snap.end) showWon(snap.end);
+  }
+
+  /* ---------- the round is won ---------- */
+  function showWon(end) {
+    var total = world.W * world.H, arr = [];
+    world.players.forEach(function (p) { if (p.count > 0) arr.push(p); });
+    arr.sort(function (p, q) { return q.count - p.count; });
+    var mine = end.id === myId;
+    $('wonTitle').textContent = mine ? 'You win! \ud83c\udfc6' : end.name + ' wins!';
+    $('wonSub').textContent = (mine ? 'You took' : 'Took') + ' over ' + Math.round(end.pct * 100) + '% of the map';
+    var board = $('wonBoard'); board.innerHTML = '';
+    arr.slice(0, 5).forEach(function (p, i) {
+      var d = document.createElement('div');
+      var dot = document.createElement('i'); dot.style.background = p.color;
+      var nm = document.createElement('span'); nm.textContent = (i + 1) + '. ' + p.name + (p.id === myId ? ' (you)' : '');
+      var pc = document.createElement('em'); pc.textContent = (p.count / total * 100).toFixed(1) + '%';
+      d.appendChild(dot); d.appendChild(nm); d.appendChild(pc); board.appendChild(d);
+    });
+    $('dead').classList.add('hidden'); deadAt = 0;
+    wonUntil = performance.now() + end.left * stepMs;
+    $('won').classList.remove('hidden');
+  }
+
+  function startPracticeRound() {      // the practice world restarted itself: reset what we show
+    useWorld(world);
+    resetStats(); focusP = null;
+    var me = world.players.get(myId);
+    if (me) { cam.x = me.x; cam.y = me.y; cam.s = 6; }
+    toast('New round!');
+  }
+
+  /* ---------- networking ---------- */
+  function closeSocket() {
+    if (ws) { var s = ws; ws = null; s.onclose = null; try { s.close(); } catch (e) {} }
+    connecting = false;
+  }
+
+  function connect(first) {
+    if (connecting) return;
+    closeSocket();
+    connecting = true;
+    $('menuErr').textContent = 'Connecting...';
+    var sock;
+    try { sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host); }
+    catch (e) { connecting = false; $('menuErr').textContent = 'Could not connect to the server.'; return; }
+    ws = sock;
+    sock.onopen = function () { sock.send(JSON.stringify(first)); };
+    sock.onmessage = function (e) {
+      var m; try { m = JSON.parse(e.data); } catch (x) { return; }
+      if (m.t === 'joined') {
+        connecting = false;
+        roomCode = m.code; stepMs = m.stepMs; myId = m.you; mode = 'online';
+        enterWorld(m.snap);
+        enterGame();
+        try { history.replaceState(null, '', '?room=' + roomCode); } catch (x) {}
+      } else if (m.t === 'round' && mode === 'online') {
+        stepMs = m.stepMs;
+        enterWorld(m.snap);          // a new round: fresh map, everybody spawns again
+        toast('New round!');
+      } else if (m.t === 's' && world && mode === 'online') {
+        world.apply(m);
+      } else if (m.t === 'err') {
+        connecting = false; $('menuErr').textContent = m.msg; closeSocket();
+      }
+    };
+    sock.onclose = function () {
+      var was = mode === 'online'; connecting = false; ws = null;
+      if (was) showMenu('Connection lost. Create or join a room to continue.');
+      else if ($('menuErr').textContent === 'Connecting...') $('menuErr').textContent = 'Could not reach the server.';
+    };
+  }
+
+  /* ---------- steering ---------- */
+  var lastSentAng = 99, lastSentAt = 0, pendingAng = null, sendTimer = 0;
+  function steer(rad) {
+    if (mode === 'practice' && world) { world.setTarget(myId, rad); return; }
+    if (mode !== 'online') return;
+    pendingAng = rad;
+    flushTurn();
+  }
+  function flushTurn() {
+    if (pendingAng === null || !ws || ws.readyState !== 1) return;
+    var now = performance.now();
+    if (Math.abs(G.wrapPi(pendingAng - lastSentAng)) < 0.02) { pendingAng = null; return; }
+    if (now - lastSentAt < 45) {
+      if (!sendTimer) sendTimer = setTimeout(function () { sendTimer = 0; flushTurn(); }, 48 - (now - lastSentAt));
+      return;
+    }
+    lastSentAt = now; lastSentAng = pendingAng;
+    ws.send(JSON.stringify({ t: 'turn', a: Math.round(pendingAng * 573) / 10 }));   // degrees, 1 decimal
+    pendingAng = null;
+  }
+
+  /* ---------- effects (shared by practice and online) ---------- */
+  function addFeed(text, mine) {
+    var f = $('feed'), d = document.createElement('div');
+    d.textContent = text; if (mine) d.className = 'mine';
+    f.appendChild(d);
+    while (f.children.length > 4) f.removeChild(f.firstChild);
+    setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 5000);
+  }
+
+  function burst(p, hx, hy) {
+    var cx = Math.max(1, Math.min(world.U - 1, hx)), cy = Math.max(1, Math.min(world.U - 1, hy));
+    var pc = pal(p.color);
+    for (var i = 0; i < 34; i++) {
+      var a = Math.random() * 6.283, sp = 6 + Math.random() * 24;
+      particles.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.9, max: 0.9, size: 0.5 + Math.random() * 1.1, color: i % 3 ? pc.solid : pc.shine });
+    }
+  }
+
+  function addFlash(c, now, sweep) {
+    var p = world.players.get(c[0]);
+    if (flashes.length > 10) flashes.shift();
+    flashes.push({ id: c[0], t0: now, sweep: sweep, cx: p ? p.x : 0, cy: p ? p.y : 0 });
+  }
+
+  function processFx(ev) {
+    var now = performance.now();
+    if (mode === 'online') {
+      latestN = ev.n;
+      (ev.sp || []).forEach(function (s) { s.hist = [[ev.n - 1, s.x, s.y]]; });
+      (ev.m || []).forEach(function (r) {
+        var p = world.players.get(r[0]);
+        if (!p) return;
+        if (!p.hist) p.hist = [];
+        p.hist.push([ev.n, r[1], r[2]]);
+        if (p.hist.length > 12) p.hist.shift();
+      });
+    }
+    if (ev.rs) { if (mode === 'practice') startPracticeRound(); else if (mode === 'menu') useWorld(world); }
+    if (ev.end && mode !== 'menu') showWon(ev.end);
+    (ev.c0 || []).forEach(function (c) { addFlash(c, now, false); });
+    (ev.tk || []).forEach(function (c) { addFlash(c, now, true); });
+    (ev.c || []).forEach(function (c) { addFlash(c, now, true); });
+    (ev.sp || []).forEach(function (s) {
+      if (s.id === myId && mode === 'online') { $('dead').classList.add('hidden'); deadAt = 0; }
+    });
+    (ev.d || []).forEach(function (d) {
+      var p = world.players.get(d[0]); if (!p) return;
+      var killer = d[1] ? world.players.get(d[1]) : null;
+      if (mode !== 'menu') {
+        addFeed(killer ? killer.name + ' eliminated ' + p.name + ' and took their land' : p.name + ' is out', (killer && killer.id === myId) || p.id === myId);
+      }
+      burst(p, p.x, p.y);
+      if (killer && killer.id === myId) myKills++;
+      if (p.id === myId) {
+        deadAt = now + 900;
+        $('deadWho').textContent = killer ? 'Cut off by ' + killer.name : 'You crashed';
+      }
+    });
+  }
+
+  /* ---------- input: joystick (touch / mouse) and keys ---------- */
+  var joy = { on: false, id: null, ax: 0, ay: 0, kx: 0, ky: 0 };
+  var JR = 52;                                 // joystick radius in screen pixels
+  function joyStart(id, x, y) { joy.on = true; joy.id = id; joy.ax = joy.kx = x; joy.ay = joy.ky = y; }
+  function joyMove(x, y) {
+    var dx = x - joy.ax, dy = y - joy.ay, d = Math.hypot(dx, dy);
+    if (d > JR) {                              // drag the anchor along so turning stays instant
+      var k = (d - JR) / d; joy.ax += dx * k; joy.ay += dy * k; dx = x - joy.ax; dy = y - joy.ay; d = JR;
+    }
+    joy.kx = joy.ax + dx; joy.ky = joy.ay + dy;
+    if (d > 9 && mode !== 'menu') steer(Math.atan2(dy, dx));
+  }
+  function joyEnd() { joy.on = false; joy.id = null; }
+
+  canvas.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    if (joy.on) return;
+    var t = e.changedTouches[0];
+    joyStart(t.identifier, t.clientX, t.clientY);
+  }, { passive: false });
+  canvas.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier === joy.id) joyMove(t.clientX, t.clientY);
+    }
+  }, { passive: false });
+  function touchDone(e) {
+    for (var i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === joy.id) joyEnd();
+  }
+  canvas.addEventListener('touchend', touchDone);
+  canvas.addEventListener('touchcancel', touchDone);
+
+  canvas.addEventListener('mousedown', function (e) { joyStart('mouse', e.clientX, e.clientY); });
+  window.addEventListener('mousemove', function (e) { if (joy.on && joy.id === 'mouse') joyMove(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', function () { if (joy.id === 'mouse') joyEnd(); });
+
+  var held = {};
+  var KEYV = { ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1], ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0] };
+  function keysSteer() {
+    var vx = 0, vy = 0;
+    for (var k in held) if (held[k]) { vx += KEYV[k][0]; vy += KEYV[k][1]; }
+    if (vx || vy) steer(Math.atan2(vy, vx));
+  }
+  window.addEventListener('keydown', function (e) {
+    if (mode === 'menu' || e.target.tagName === 'INPUT' || !KEYV[e.code]) return;
+    e.preventDefault(); held[e.code] = true; keysSteer();
+  });
+  window.addEventListener('keyup', function (e) { if (KEYV[e.code]) { held[e.code] = false; keysSteer(); } });
+  window.addEventListener('blur', function () { held = {}; joyEnd(); });
+
+  /* ---------- menu wiring ---------- */
+  function seg(id, key) {
+    $(id).addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      Array.prototype.forEach.call($(id).children, function (c) { c.classList.remove('on'); });
+      b.classList.add('on'); opts[key] = b.getAttribute('data-v');
+    });
+  }
+  seg('sizeSeg', 'size'); seg('botSeg', 'bots');
+  $('btnPractice').onclick = startPractice;
+  $('btnCreate').onclick = function () { $('createBox').classList.toggle('hidden'); $('joinBox').classList.add('hidden'); };
+  $('btnJoin').onclick = function () { $('joinBox').classList.toggle('hidden'); $('createBox').classList.add('hidden'); setTimeout(function () { $('codeIn').focus(); }, 30); };
+  $('btnStartRoom').onclick = function () { connect({ t: 'create', name: playerName(), size: opts.size, bots: +opts.bots }); };
+  $('btnGoJoin').onclick = function () {
+    var c = $('codeIn').value.trim().toUpperCase();
+    if (c.length !== 4) { $('menuErr').textContent = 'Enter the 4-letter room code.'; return; }
+    connect({ t: 'join', code: c, name: playerName() });
+  };
+  $('codeIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btnGoJoin').click(); });
+  $('btnJoinLink').onclick = function () { connect({ t: 'join', code: $('linkCode').textContent, name: playerName() }); };
+  $('btnLeave').onclick = function () { showMenu(); };
+  $('btnToMenu').onclick = function () { showMenu(); };
+  $('btnWonMenu').onclick = function () { showMenu(); };
+  $('btnAgain').onclick = function () {
+    myKills = 0; bestCount = 0; deadAt = 0; $('dead').classList.add('hidden');
+    if (mode === 'practice') world.respawn(myId);
+    else if (mode === 'online' && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'respawn' }));
+    focusP = null;
+  };
+  $('btnInvite').onclick = function () {
+    var url = location.origin + location.pathname + '?room=' + roomCode;
+    var text = 'Join my Turf Party room! Code: ' + roomCode;
+    if (navigator.share) { navigator.share({ title: 'Turf Party', text: text, url: url }).catch(function () {}); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(function () { toast('Invite link copied'); }, function () { toast(url); });
+    else toast(url);
+  };
+
+  if (OFFLINE) { $('friends').classList.add('hidden'); $('offlineNote').classList.remove('hidden'); }
+  $('nameIn').value = store('turf-name') || '';
+  var urlRoom = (new URLSearchParams(location.search).get('room') || '').toUpperCase().slice(0, 4);
+  if (urlRoom.length === 4 && !OFFLINE) {
+    $('linkCode').textContent = urlRoom; $('btnJoinLink').classList.remove('hidden');
+    $('btnPractice').classList.remove('primary'); $('codeIn').value = urlRoom;
+  }
+
+  /* ---------- smooth territory shapes ----------
+     Each owner's land is a raster. We trace its outline, round it off with a few smoothing
+     passes and keep it as a vector path, so edges look like clean curves at any zoom. */
+  function ensureEdges() {
+    var V = world.W + 1;
+    if (edgeFor === world) return;
+    edgeA = new Int32Array(V * V).fill(-1);
+    edgeB = new Int32Array(V * V).fill(-1);
+    edgeFor = world;
+  }
+
+  function buildTerritory(id) {
+    var b = world.bb[id];
+    if (!b) return null;
+    ensureEdges();
+    var W = world.W, R = world.R, V = W + 1, owner = world.owner;
+    var x0 = Math.max(0, b[0]), y0 = Math.max(0, b[1]), x1 = Math.min(W - 1, b[2]), y1 = Math.min(W - 1, b[3]);
+    var starts = [], x, y;
+    function add(a, c) {
+      if (edgeA[a] < 0) { edgeA[a] = c; starts.push(a); } else edgeB[a] = c;
+    }
+    for (y = y0; y <= y1; y++) {
+      var row = y * W;
+      for (x = x0; x <= x1; x++) {
+        if (owner[row + x] !== id) continue;
+        var tl = y * V + x, tr = tl + 1, bl = tl + V, br = bl + 1;
+        if (y === 0 || owner[row - W + x] !== id) add(tl, tr);
+        if (x === W - 1 || owner[row + x + 1] !== id) add(tr, br);
+        if (y === W - 1 || owner[row + W + x] !== id) add(br, bl);
+        if (x === 0 || owner[row + x - 1] !== id) add(bl, tl);
+      }
+    }
+    var path = new Path2D();
+    for (var si = 0; si < starts.length; si++) {
+      var s = starts[si];
+      while (edgeA[s] >= 0) {
+        var xs = [], ys = [], v = s, guard = 0;
+        do {
+          xs.push(v % V); ys.push((v / V) | 0);
+          var nx;
+          if (edgeA[v] >= 0) { nx = edgeA[v]; edgeA[v] = edgeB[v]; edgeB[v] = -1; }
+          else { nx = edgeB[v]; edgeB[v] = -1; }
+          v = nx;
+        } while (v !== s && v >= 0 && ++guard < 400000);
+        if (xs.length >= 4) addLoop(path, xs, ys, R);
+      }
+    }
+    // anything left over (should be nothing) is cleared so the next build starts clean
+    for (si = 0; si < starts.length; si++) { edgeA[starts[si]] = -1; edgeB[starts[si]] = -1; }
+    return { path: path };
+  }
+
+  function addLoop(path, xs, ys, R) {
+    var n = xs.length, i, pass;
+    var ax = Float32Array.from(xs), ay = Float32Array.from(ys), bx = new Float32Array(n), by = new Float32Array(n);
+    for (pass = 0; pass < SMOOTH_PASSES; pass++) {
+      for (i = 0; i < n; i++) {
+        var p = i === 0 ? n - 1 : i - 1, q = i === n - 1 ? 0 : i + 1;
+        bx[i] = 0.5 * ax[i] + 0.25 * (ax[p] + ax[q]);
+        by[i] = 0.5 * ay[i] + 0.25 * (ay[p] + ay[q]);
+      }
+      var tx = ax; ax = bx; bx = tx; var ty = ay; ay = by; by = ty;
+    }
+    // drop points that sit on a straight line
+    var px = [], py = [], lastX = ax[0] / R, lastY = ay[0] / R;
+    px.push(lastX); py.push(lastY);
+    for (i = 1; i < n; i++) {
+      var cx = ax[i] / R, cy = ay[i] / R, nxp = ax[(i + 1) % n] / R, nyp = ay[(i + 1) % n] / R;
+      var ex = nxp - lastX, ey = nyp - lastY, el = Math.hypot(ex, ey) || 1;
+      var dist = Math.abs((cx - lastX) * ey - (cy - lastY) * ex) / el;
+      if (dist > 0.012 || el > 3) { px.push(cx); py.push(cy); lastX = cx; lastY = cy; }
+    }
+    // curve through the midpoints between neighbours, so corners come out round, not faceted
+    var m = px.length;
+    path.moveTo((px[m - 1] + px[0]) / 2, (py[m - 1] + py[0]) / 2);
+    for (i = 0; i < m; i++) {
+      var j = i === m - 1 ? 0 : i + 1;
+      path.quadraticCurveTo(px[i], py[i], (px[i] + px[j]) / 2, (py[i] + py[j]) / 2);
+    }
+    path.closePath();
+  }
+
+  function refreshTerritories() {
+    var built = 0, id;
+    for (id in terr) if (!world.bb[id]) delete terr[id];
+    for (id in world.dirty) {
+      if (!world.bb[id]) { delete terr[id]; delete world.dirty[id]; continue; }
+      if (built >= MAX_BUILDS && terr[id]) continue;      // keep the old shape for a frame or two
+      terr[id] = buildTerritory(+id);
+      delete world.dirty[id];
+      built++;
+    }
+  }
+
+  /* ---------- where is a player drawn? ----------
+     Practice: between the previous and the current tick.
+     Online: a little behind the newest tick, using a short history, so network jitter never shows. */
+  var place = { x: 0, y: 0, drop: 0 };
+  function placeOf(p, a) {
+    if (mode !== 'online') {
+      place.x = p.px + (p.x - p.px) * a; place.y = p.py + (p.y - p.py) * a; place.drop = a < 1 ? 1 : 0;
+      return place;
+    }
+    var h = p.hist;
+    if (!h || !h.length) { place.x = p.x; place.y = p.y; place.drop = 0; return place; }
+    var T = renderT, lo = -1, k;
+    for (k = h.length - 1; k >= 0; k--) { if (h[k][0] <= T) { lo = k; break; } }
+    if (lo < 0) { place.x = h[0][1]; place.y = h[0][2]; place.drop = Math.max(0, latestN - Math.floor(T)); return place; }
+    var A = h[lo], B = h[lo + 1];
+    if (!B) { place.x = A[1]; place.y = A[2]; }
+    else {
+      var f = Math.max(0, Math.min(1, (T - A[0]) / (B[0] - A[0])));
+      place.x = A[1] + (B[1] - A[1]) * f; place.y = A[2] + (B[2] - A[2]) * f;
+    }
+    place.drop = Math.max(0, latestN - Math.floor(T));
+    return place;
+  }
+
+  /* ---------- drawing ---------- */
+  function pickFocus(now) {
+    var me = world.players.get(myId);
+    if (mode !== 'menu' && me && me.alive) return me;
+    if (!focusP || !focusP.alive || now - lastPick > 2500) {
+      var best = null;
+      world.players.forEach(function (p) { if (p.alive && (!best || p.count > best.count)) best = p; });
+      focusP = best; lastPick = now;
+    }
+    return focusP;
+  }
+
+  function drawHead(cx, cy, pc) {
+    var h = HEAD / 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    rr(cx - h + 0.25, cy - h + 0.95, HEAD, HEAD, 1.3); ctx.fill();
+    rr(cx - h, cy - h + 0.5, HEAD, HEAD, 1.3); ctx.fillStyle = pc.dark; ctx.fill();
+    rr(cx - h, cy - h, HEAD, HEAD, 1.3); ctx.fillStyle = pc.head; ctx.fill();
+    rr(cx - h * 0.6, cy - h * 0.6, h * 1.2, h * 1.2, 0.8); ctx.fillStyle = pc.shine; ctx.globalAlpha = 0.5; ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // a soft ring of light sweeps over land that was just captured
+  function drawFlashes(now) {
+    var U = world.U;
+    for (var fi = flashes.length - 1; fi >= 0; fi--) {
+      var fl = flashes[fi], age = now - fl.t0, T = terr[fl.id];
+      if (age > 1100 || !world.bb[fl.id]) { flashes.splice(fi, 1); continue; }
+      if (!T) continue;
+      ctx.save();
+      ctx.clip(T.path);
+      if (fl.sweep) {
+        var rad = age * 0.1, R0 = Math.max(0, rad - 14);
+        var g = ctx.createRadialGradient(fl.cx, fl.cy, R0, fl.cx, fl.cy, rad + 3);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.82, 'rgba(255,255,255,0.6)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(fl.cx - rad - 4, fl.cy - rad - 4, 2 * rad + 8, 2 * rad + 8);
+        if (age < 200) { ctx.fillStyle = 'rgba(255,255,255,' + (0.28 * (1 - age / 200)).toFixed(3) + ')'; ctx.fillRect(0, 0, U, U); }
+      } else if (age < 500) {
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 * (1 - age / 500)).toFixed(3) + ')';
+        ctx.fillRect(0, 0, U, U);
+      }
+      ctx.restore();
+    }
+  }
+
+  function strokeTrail(p, a, P) {
+    var pts = p.pts, n = pts.length >> 1;
+    var pl = placeOf(p, a), hx = pl.x, hy = pl.y;
+    var last = n - 1 - pl.drop;                    // newest trail point that is not ahead of the head
+    if (n < 2 || last < 0) return { x: hx, y: hy };
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    // pass through midpoints so corners are rounded, not faceted
+    for (var i = 1; i <= last; i++) {
+      var mx = (pts[2 * i - 2] + pts[2 * i]) / 2, my = (pts[2 * i - 1] + pts[2 * i + 1]) / 2;
+      if (i === 1) ctx.lineTo(mx, my); else ctx.quadraticCurveTo(pts[2 * i - 2], pts[2 * i - 1], mx, my);
+    }
+    if (last >= 1) ctx.quadraticCurveTo(pts[2 * last], pts[2 * last + 1], hx, hy); else ctx.lineTo(hx, hy);
+    ctx.lineWidth = TRAIL; ctx.strokeStyle = P.trail; ctx.stroke();
+    return { x: hx, y: hy };
+  }
+
+  function draw(now, dt) {
+    var U = world.U, i, x, y;
+    var a = Math.max(0, Math.min(1, (now - stepAt) / stepMs));
+    var f = pickFocus(now);
+    var fx, fy, area = 9000;
+    if (f) {
+      var fp = placeOf(f, a); fx = fp.x; fy = fp.y;
+      lastFocus = { x: fx, y: fy };
+      if (mode !== 'menu' && f.id === myId) area = 8200 + Math.min(14000, f.count / 4 * 1.6);
+    } else if (lastFocus) { fx = lastFocus.x; fy = lastFocus.y; }
+    else { fx = U / 2; fy = U / 2; }
+    var ts = Math.max(2.4, Math.min(8, Math.sqrt((VW * VH) / area)));
+    var kPos = 1 - Math.exp(-dt * 10), kZoom = 1 - Math.exp(-dt * 1.4);
+    cam.x += (fx - cam.x) * kPos; cam.y += (fy - cam.y) * kPos; cam.s += (ts - cam.s) * kZoom;
+
+    refreshTerritories();
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = '#2b3646'; ctx.fillRect(0, 0, VW, VH);
+    ctx.save();
+    ctx.translate(VW / 2, VH / 2); ctx.scale(cam.s, cam.s); ctx.translate(-cam.x, -cam.y);
+
+    var hx = VW / 2 / cam.s + 2, hy = VH / 2 / cam.s + 2;
+    var x0 = Math.max(0, Math.floor(cam.x - hx)), x1 = Math.min(U, Math.ceil(cam.x + hx));
+    var y0 = Math.max(0, Math.floor(cam.y - hy)), y1 = Math.min(U, Math.ceil(cam.y + hy));
+
+    // floor + grid
+    ctx.fillStyle = '#e6ebf2'; ctx.fillRect(0, 0, U, U);
+    ctx.beginPath();
+    for (x = Math.ceil(x0 / GRID) * GRID; x <= x1; x += GRID) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
+    for (y = Math.ceil(y0 / GRID) * GRID; y <= y1; y += GRID) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+    ctx.lineWidth = 1 / cam.s; ctx.strokeStyle = 'rgba(148,163,184,0.34)'; ctx.stroke();
+
+    // territory: raised sides first, then the tops, so neighbours overlap cleanly
+    var ids = [];
+    for (var id in terr) if (terr[id] && world.players.get(+id)) ids.push(+id);
+    ctx.lineJoin = 'round';
+    for (i = 0; i < ids.length; i++) {
+      var pe = pal(world.players.get(ids[i]).color);
+      ctx.save(); ctx.translate(0, EXT);
+      ctx.fillStyle = pe.edge; ctx.fill(terr[ids[i]].path);
+      ctx.lineWidth = 0.2; ctx.strokeStyle = pe.edge; ctx.stroke(terr[ids[i]].path);
+      ctx.restore();
+    }
+    for (i = 0; i < ids.length; i++) {
+      var pt = pal(world.players.get(ids[i]).color);
+      ctx.fillStyle = pt.terr; ctx.fill(terr[ids[i]].path);
+      ctx.lineWidth = 0.2; ctx.strokeStyle = pt.terr; ctx.stroke(terr[ids[i]].path);
+    }
+
+    drawFlashes(now);
+
+    // map border
+    ctx.lineWidth = 1.2; ctx.strokeStyle = '#1b2433'; ctx.strokeRect(-0.6, -0.6, U + 1.2, U + 1.2);
+
+    // trails (everyone else first, then me), then heads
+    var list = [];
+    world.players.forEach(function (p) { if (p.alive) list.push(p); });
+    list.sort(function (p, q) { return (p.id === myId) - (q.id === myId); });
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    var heads = [];
+    list.forEach(function (p) {
+      var P = pal(p.color), hp = strokeTrail(p, a, P);
+      heads.push([hp.x, hp.y, P]);
+    });
+    for (i = 0; i < heads.length; i++) drawHead(heads[i][0], heads[i][1], heads[i][2]);
+
+    // particles
+    for (i = particles.length - 1; i >= 0; i--) {
+      var q = particles[i];
+      q.life -= dt; if (q.life <= 0) { particles.splice(i, 1); continue; }
+      q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.97; q.vy *= 0.97;
+      ctx.globalAlpha = Math.max(0, q.life / q.max);
+      ctx.fillStyle = q.color; rr(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size, q.size * 0.3); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // names
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.font = '800 ' + Math.max(10, Math.min(15, cam.s * 2.2)).toFixed(1) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round'; ctx.lineWidth = 3;
+    for (i = 0; i < list.length; i++) {
+      var sx = (heads[i][0] - cam.x) * cam.s + VW / 2;
+      var sy = (heads[i][1] - cam.y) * cam.s + VH / 2 - HEAD * cam.s * 0.82;
+      if (sx < -60 || sx > VW + 60 || sy < -20 || sy > VH + 20) continue;
+      ctx.strokeStyle = 'rgba(15,23,42,0.75)'; ctx.strokeText(list[i].name, sx, sy);
+      ctx.fillStyle = '#fff'; ctx.fillText(list[i].name, sx, sy);
+    }
+
+    // joystick
+    if (joy.on && mode !== 'menu') {
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.beginPath(); ctx.arc(joy.ax, joy.ay, JR, 0, 6.2832); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath(); ctx.arc(joy.kx, joy.ky, 22, 0, 6.2832); ctx.fill();
+    }
+  }
+
+  function updateHud(now) {
+    if (now - hudAt < 250 || mode === 'menu') return;
+    hudAt = now;
+    var me = world.players.get(myId), total = world.W * world.H;
+    if (me) {
+      $('pct').textContent = (me.count / total * 100).toFixed(1) + '%';
+      $('kills').textContent = myKills + ' eliminated \u00b7 win at ' + Math.round(G.WIN_SHARE * 100) + '%';
+    }
+    var arr = [];
+    world.players.forEach(function (p) { if (p.alive) arr.push(p); });
+    arr.sort(function (p, q) { return q.count - p.count; });
+    var board = $('board'); board.innerHTML = '';
+    arr.slice(0, 5).forEach(function (p, i) {
+      var d = document.createElement('div'); if (p.id === myId) d.className = 'me';
+      var dot = document.createElement('i'); dot.style.background = p.color;
+      var nm = document.createElement('span'); nm.textContent = (i + 1) + '. ' + p.name;
+      var pc = document.createElement('em'); pc.textContent = (p.count / total * 100).toFixed(1) + '%';
+      d.appendChild(dot); d.appendChild(nm); d.appendChild(pc); board.appendChild(d);
+    });
+  }
+
+  function frame(now) {
+    var dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+    if (world) {
+      if (mode === 'practice' || mode === 'menu') {
+        acc += dt * 1000;
+        var guard = 0;
+        while (acc >= stepMs && guard++ < 6) {
+          acc -= stepMs;
+          processFx(world.step());
+        }
+        if (acc > stepMs) acc = 0;
+        stepAt = now - acc;
+      } else if (mode === 'online') {
+        // the drawn tick advances with real time, and drifts gently toward "newest minus a small lag"
+        renderT += dt * 1000 / stepMs;
+        var target = latestN - LAG_TICKS;
+        if (Math.abs(renderT - target) > 4) renderT = target;
+        else renderT += (target - renderT) * Math.min(1, dt * 3);
+        if (renderT > latestN) renderT = latestN;
+        stepAt = now;
+      }
+      if (wonUntil) $('wonNext').textContent = 'Next round in ' + Math.max(0, Math.ceil((wonUntil - now) / 1000)) + 's';
+      var mine = world.players.get(myId);
+      if (mine && mode !== 'menu') bestCount = Math.max(bestCount, mine.count);
+      draw(now, dt);
+      updateHud(now);
+      if (deadAt && now > deadAt) {
+        deadAt = 0;
+        $('dPct').textContent = (bestCount / (world.W * world.H) * 100).toFixed(1) + '%';
+        $('dKills').textContent = myKills;
+        $('dead').classList.remove('hidden');
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  startDemo();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
